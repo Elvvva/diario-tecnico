@@ -1,0 +1,43 @@
+/* Colores y tipografía. Todo el aspecto sale de estas variables:
+   para cambiar el azul de la app, toca --brand (claro) y --brand (oscuro). */
+:root {
+  --brand: #0891b2; --brand-strong: #0e7490; --brand-soft: #e0f4f9; --on-brand: #fff;
+  --bg: #f0f8fb; --surface: #fff; --surface-2: #e8f2f6;
+  --text: #0b2530; --muted: #587684; --border: #d3e5ec;
+  --danger: #d64545; --ok: #1f9d63; --warn: #c98a0b;
+  --radius: 18px; --radius-sm: 12px; --shadow: 0 2px 10px rgba(8, 60, 80, .08);
+  --tab-h: 64px; --top-h: 56px; --side-w: 268px;
+  color-scheme: light;
+}
+/* Oscuro automático (según el sistema) salvo que se haya forzado el claro */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --brand: #22b8d6; --brand-strong: #67d4ea; --brand-soft: #0f3340; --on-brand: #052029;
+    --bg: #071a20; --surface: #0e2830; --surface-2: #143641;
+    --text: #e5f3f7; --muted: #8fb0bc; --border: #1d4150; --shadow: 0 2px 12px rgba(0, 0, 0, .4);
+    color-scheme: dark;
+  }
+}
+/* Oscuro forzado con el interruptor */
+:root[data-theme="dark"] {
+  --brand: #22b8d6; --brand-strong: #67d4ea; --brand-soft: #0f3340; --on-brand: #052029;
+  --bg: #071a20; --surface: #0e2830; --surface-2: #143641;
+  --text: #e5f3f7; --muted: #8fb0bc; --border: #1d4150; --shadow: 0 2px 12px rgba(0, 0, 0, .4);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+[hidden] { display: none !important; }
+.hidden { display: none; }
+a { color: var(--brand-strong); }
+h1 { font-size: 1.6rem; margin: 0 0 4px; }
+h2 { font-size: 1.15rem; margin: 24px 0 10px; }
+p { margin: 0 0 12px; }
+.muted { color: var(--muted); }
+.hint { color: var(--muted); font-size: .85rem; }
+.ico { display: inline-flex; align-items: center; justify-content: center; }
