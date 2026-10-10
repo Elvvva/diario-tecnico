@@ -36,7 +36,7 @@
 /* Formularios */
 .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
 .field-label { font-weight: 700; font-size: .9rem; }
-input[type="text"], input[type="date"], select, textarea {
+input[type="text"], input[type="date"], input[type="email"], input[type="password"], select, textarea {
   width: 100%; min-height: 48px; padding: 10px 12px; font: inherit; color: var(--text);
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm);
 }
@@ -112,3 +112,9 @@ dialog.dlg h2 { margin-top: 0; }
 .toast.out { opacity: 0; }
 @media (min-width: 900px) { .toast { bottom: 24px; } }
 .banner { padding: 12px 14px; border-radius: var(--radius-sm); background: #fdf0d5; color: #6b4600; margin-bottom: 14px; font-size: .92rem; }
+
+/* Cuenta y sincronización */
+.account-box { display: flex; flex-direction: column; gap: 2px; }
+.account-box .side-link { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.error { color: var(--danger); min-height: 1.2em; font-weight: 600; }
+.actions-row { display: flex; flex-wrap: wrap; gap: 10px; }

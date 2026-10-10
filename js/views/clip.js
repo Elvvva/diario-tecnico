@@ -10,7 +10,9 @@ import { modal, confirmDialog, toast } from '../components/dialogs.js';
 import { notifySectionsChanged } from '../components/section-actions.js';
 import { formatDate, formatDateTime } from '../utils/dates.js';
 import { formatBytes, formatDuration } from '../utils/format.js';
-import { go, refresh } from '../router.js';
+import { go, refresh, parseHash } from '../router.js';
+import { cloudConfigured, currentUser } from '../services/cloud.js';
+import { ensureVideoLocal } from '../services/sync.js';
 
 function editDialog(clip, sections, planes) {
   return modal((dlg, close) => {
@@ -33,9 +35,17 @@ export default async function clipView({ id }, container) {
     container.append(h('div', { class: 'page' }, h('p', {}, 'Este vídeo ya no existe.'), h('a', { class: 'btn', href: '#/' }, 'Volver')));
     return;
   }
-  const [sections, planes, blob] = await Promise.all([listSections(), getPlanes(), getVideoBlob(id)]);
+  const [sections, planes, localBlob] = await Promise.all([listSections(), getPlanes(), getVideoBlob(id)]);
   const section = sections.find((s) => s.id === clip.sectionId);
-  const player = blob ? createPlayer(blob) : null;
+  const player = localBlob ? createPlayer(localBlob) : null;
+  // Si el vídeo no está en este dispositivo (se subió desde otro), se descarga de la nube.
+  const placeholder = h('div', { class: 'card' }, 'No se encontró el archivo de vídeo en este dispositivo.');
+  if (!localBlob && cloudConfigured() && currentUser()) {
+    placeholder.textContent = 'Descargando el vídeo de la nube…';
+    ensureVideoLocal(id)
+      .then((b) => { if (b && parseHash().path === `/clip/${id}`) refresh(); })
+      .catch((e) => { placeholder.textContent = e.message; });
+  }
 
   // --- Notas ---
   let type = 'comentario';
@@ -96,7 +106,7 @@ export default async function clipView({ id }, container) {
         h('button', { class: 'btn', type: 'button', onclick: edit }, icon('edit', 18), 'Editar'),
         h('button', { class: 'btn', type: 'button', onclick: remove }, icon('trash', 18), 'Borrar'))),
     h('div', { class: 'clip-layout' },
-      player ? player.el : h('div', { class: 'card' }, 'No se encontró el archivo de vídeo.'),
+      player ? player.el : placeholder,
       h('div', { class: 'card' }, facts,
         h('h2', { style: 'margin-top:8px' }, 'Comentarios y mejoras'),
         typePicker.el, h('div', { style: 'height:10px' }), text,

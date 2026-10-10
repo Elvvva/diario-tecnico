@@ -1,6 +1,6 @@
 // Secciones: tus "pestañas" (Braza, Salida braza, Viraje braza, Subacuático...).
-// Tú las creas, renombras, reordenas y borras.
-import { run, req, uid, getAll, getOne, putOne } from '../db.js';
+// Tú las creas, renombras, reordenas y borras. Cada cambio se anota en la bandeja de salida (outbox).
+import { run, req, uid, getAll, getOne, putOne, queue } from '../db.js';
 
 export const DEFAULT_SWIMMER = 'yo';
 
@@ -26,8 +26,9 @@ export async function createSection(name) {
   const all = await getAll('sections');
   const clean = cleanName(name, all);
   const order = all.length ? Math.max(...all.map((s) => s.order)) + 1 : 0;
-  const section = { id: uid(), swimmerId: DEFAULT_SWIMMER, name: clean, order, createdAt: Date.now() };
-  await putOne('sections', section);
+  const ts = Date.now();
+  const section = { id: uid(), swimmerId: DEFAULT_SWIMMER, name: clean, order, createdAt: ts, updatedAt: ts };
+  await run(['sections', 'outbox'], 'readwrite', (s, o) => { s.put(section); queue(o, 'section', section.id, 'put', ts); });
   return section;
 }
 
@@ -36,7 +37,8 @@ export async function renameSection(id, name) {
   const section = all.find((s) => s.id === id);
   if (!section) throw new Error('La sección no existe.');
   section.name = cleanName(name, all.filter((s) => s.id !== id));
-  await putOne('sections', section);
+  section.updatedAt = Date.now();
+  await run(['sections', 'outbox'], 'readwrite', (s, o) => { s.put(section); queue(o, 'section', id, 'put', section.updatedAt); });
   return section;
 }
 
@@ -47,8 +49,12 @@ export async function moveSection(id, dir) {
   const j = i + dir;
   if (i < 0 || j < 0 || j >= list.length) return;
   const a = list[i], b = list[j];
+  const ts = Date.now();
   [a.order, b.order] = [b.order, a.order];
-  await run(['sections'], 'readwrite', (s) => { s.put(a); s.put(b); });
+  a.updatedAt = b.updatedAt = ts;
+  await run(['sections', 'outbox'], 'readwrite', (s, o) => {
+    s.put(a); s.put(b); queue(o, 'section', a.id, 'put', ts); queue(o, 'section', b.id, 'put', ts);
+  });
 }
 
 export async function sectionCounts() {
@@ -64,12 +70,14 @@ export async function sectionClipCount(id) { return (await sectionCounts())[id] 
 // Si la sección tiene vídeos hay que indicar a qué sección moverlos (moveToId).
 // Todo ocurre en una sola transacción: o se hace entero o no se hace nada.
 export async function deleteSection(id, moveToId = null) {
-  await run(['sections', 'clips'], 'readwrite', async (sections, clips) => {
+  await run(['sections', 'clips', 'outbox'], 'readwrite', async (sections, clips, o) => {
     const list = await req(clips.index('sectionId').getAll(id));
+    const ts = Date.now();
     if (list.length) {
       if (!moveToId || moveToId === id) throw new Error('La sección tiene vídeos: indica a qué sección moverlos.');
-      for (const c of list) { c.sectionId = moveToId; clips.put(c); }
+      for (const c of list) { c.sectionId = moveToId; c.updatedAt = ts; clips.put(c); queue(o, 'clip', c.id, 'put', ts); }
     }
     sections.delete(id);
+    queue(o, 'section', id, 'delete', ts);
   });
 }

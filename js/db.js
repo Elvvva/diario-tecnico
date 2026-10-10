@@ -1,11 +1,13 @@
 // ÚNICO archivo que habla directamente con IndexedDB (la base de datos del navegador).
 // El resto de la app usa las funciones de aquí y de js/services/.
 //
-// "Cajas" (stores): swimmers, sections, clips, videos, notes, comparisons, settings.
-// Los vídeos van en su propia caja (videos) para que listar clips sea rápido.
+// "Cajas" (stores): swimmers, sections, clips, videos, notes, comparisons, settings y outbox.
+// - Los vídeos van en su propia caja (videos) para que listar clips sea rápido.
+// - outbox = "bandeja de salida": lista de cambios locales pendientes de subir a la nube.
 
 let dbName = 'diario-tecnico';
 let dbPromise = null;
+const DB_VERSION = 2; // v1 = Fase 1 · v2 = añade la bandeja de salida (outbox)
 
 // Solo para las pruebas: usar otra base de datos distinta de la real.
 export function useDatabase(name) { dbName = name; dbPromise = null; }
@@ -30,18 +32,29 @@ export function uid() {
 export function open() {
   if (dbPromise) return dbPromise;
   dbPromise = new Promise((resolve, reject) => {
-    const r = indexedDB.open(dbName, 1);
+    const r = indexedDB.open(dbName, DB_VERSION);
     r.onupgradeneeded = () => {
       const db = r.result;
-      db.createObjectStore('swimmers', { keyPath: 'id' });
-      db.createObjectStore('sections', { keyPath: 'id' });
-      db.createObjectStore('clips', { keyPath: 'id' }).createIndex('sectionId', 'sectionId');
-      db.createObjectStore('videos', { keyPath: 'id' });
-      db.createObjectStore('notes', { keyPath: 'id' }).createIndex('clipId', 'clipId');
-      db.createObjectStore('comparisons', { keyPath: 'id' });
-      db.createObjectStore('settings', { keyPath: 'key' });
+      // Crea solo las cajas que falten: así se actualiza una base de la Fase 1 sin perder datos.
+      const make = (name, opts, indexes = []) => {
+        if (db.objectStoreNames.contains(name)) return;
+        const s = db.createObjectStore(name, opts);
+        indexes.forEach(([n, k]) => s.createIndex(n, k));
+      };
+      make('swimmers', { keyPath: 'id' });
+      make('sections', { keyPath: 'id' });
+      make('clips', { keyPath: 'id' }, [['sectionId', 'sectionId']]);
+      make('videos', { keyPath: 'id' });
+      make('notes', { keyPath: 'id' }, [['clipId', 'clipId']]);
+      make('comparisons', { keyPath: 'id' });
+      make('settings', { keyPath: 'key' });
+      make('outbox', { keyPath: 'key' });
     };
-    r.onsuccess = () => resolve(r.result);
+    r.onsuccess = () => {
+      const db = r.result;
+      db.onversionchange = () => { db.close(); dbPromise = null; };
+      resolve(db);
+    };
     r.onerror = () => reject(r.error);
   });
   return dbPromise;
@@ -56,19 +69,32 @@ export function req(request) {
 }
 
 // Ejecuta varias operaciones en UNA transacción (o todo o nada).
-// run(['clips','videos'], 'readwrite', async (clips, videos) => { ... })
-export async function run(storeNames, mode, fn) {
+// run(['clips','outbox'], 'readwrite', async (clips, outbox) => { ... })
+// Si la transacción escribe en 'outbox' avisa con el evento "outbox-changed" (así se sincroniza solo),
+// salvo que se pase { silent: true } (lo usa la propia sincronización).
+export async function run(storeNames, mode, fn, { silent = false } = {}) {
   const db = await open();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(storeNames, mode);
     let result, failure = null;
-    tx.oncomplete = () => resolve(result);
+    tx.oncomplete = () => {
+      resolve(result);
+      if (!silent && mode === 'readwrite' && storeNames.includes('outbox')) {
+        globalThis.dispatchEvent?.(new Event('outbox-changed'));
+      }
+    };
     tx.onabort = () => reject(failure || tx.error || new Error('Transacción cancelada'));
     tx.onerror = () => { failure = failure || tx.error; };
     (async () => fn(...storeNames.map((s) => tx.objectStore(s))))()
       .then((r) => { result = r; })
       .catch((e) => { failure = e; try { tx.abort(); } catch { /* ya cerrada */ } });
   });
+}
+
+// Anota en la bandeja de salida que un registro hay que subir ('put') o borrar ('delete') en la nube.
+// kind: 'section' | 'clip' | 'note' | 'comparison' | 'video'
+export function queue(outboxStore, kind, id, op, updatedAt = Date.now()) {
+  outboxStore.put({ key: `${kind}:${id}`, kind, id, op, updatedAt });
 }
 
 export const getAll = (store) => run([store], 'readonly', (s) => req(s.getAll()));

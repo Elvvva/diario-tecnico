@@ -18,3 +18,12 @@ export function formatDate(dateStr) {
 export function formatDateTime(ts) {
   return new Date(ts).toLocaleString('es-ES', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
+
+// "hace un momento", "hace 5 min", "hace 3 h", o la fecha si es más antiguo
+export function timeAgo(ts) {
+  const min = Math.round((Date.now() - ts) / 60000);
+  if (min < 1) return 'hace un momento';
+  if (min < 60) return `hace ${min} min`;
+  if (min < 24 * 60) return `hace ${Math.round(min / 60)} h`;
+  return new Date(ts).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
+}

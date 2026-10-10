@@ -1,5 +1,5 @@
 // Pruebas ejecutables en el navegador. Abre tests/tests.html con el servidor local.
-import { useDatabase, dropDatabase, getAll, getOne } from '../js/db.js';
+import { useDatabase, dropDatabase, getAll, getOne, putOne } from '../js/db.js';
 import { seasonOf } from '../js/utils/dates.js';
 import { formatBytes, formatDuration, formatTime } from '../js/utils/format.js';
 import { filterClips, sortClips, groupBySeason, addClip, listClips, updateClip, deleteClip, getVideoBlob } from '../js/services/clips.js';
@@ -7,6 +7,7 @@ import { createSection, renameSection, moveSection, listSections, deleteSection,
 import { addNote, listNotes, toggleNoteStatus } from '../js/services/notes.js';
 import { assessSpace } from '../js/services/storage.js';
 import { snapFps } from '../js/components/player.js';
+import { shouldApplyRemote, applyRemoteDoc, mergeDuplicateSections } from '../js/services/sync.js';
 
 const out = document.getElementById('out');
 let pass = 0, fail = 0;
@@ -109,6 +110,41 @@ await test('Borrar clip: se borran también su vídeo y sus notas', async () => 
   const [c] = await listClips();
   await deleteClip(c.id);
   eq((await getAll('clips')).length, 0); eq(await getOne('videos', c.id), undefined, 'vídeo'); eq((await getAll('notes')).length, 0, 'notas');
+});
+
+// ---------- Sincronización (sin servidor: solo la lógica local) ----------
+await test('Sync: cada cambio local queda anotado en la bandeja de salida', async () => {
+  const [s] = await listSections();
+  const c = await addClip({ file: fakeFile('x.mp4'), sectionId: s.id, plane: 'Aéreo', date: '2026-03-01', comment: 'nota' });
+  const keys = (await getAll('outbox')).map((e) => e.key);
+  eq(keys.includes(`clip:${c.id}`), true, 'clip'); eq(keys.includes(`video:${c.id}`), true, 'vídeo');
+  eq(keys.some((k) => k.startsWith('note:')), true, 'nota');
+  await deleteClip(c.id);
+  const out = await getAll('outbox');
+  eq(out.find((e) => e.key === `clip:${c.id}`).op, 'delete', 'lápida del clip');
+  eq(out.find((e) => e.key === `video:${c.id}`).op, 'delete', 'borrado del vídeo');
+});
+await test('Sync: regla de conflicto (gana lo más reciente)', () => {
+  eq(shouldApplyRemote(5, 3), true); eq(shouldApplyRemote(3, 5), false); eq(shouldApplyRemote(5, 5), false);
+});
+await test('Sync: aplicar documentos de la nube (nuevo, viejo, conflicto y borrado)', async () => {
+  const base = { kind: 'section', id: 'remoto-1', data: { id: 'remoto-1', name: 'Crol', order: 9, createdAt: 1, swimmerId: 'yo' }, deleted: false, updated_at: 1000 };
+  const name = async () => (await getOne('sections', 'remoto-1'))?.name;
+  eq(await applyRemoteDoc(base), true); eq(await name(), 'Crol');
+  eq(await applyRemoteDoc({ ...base, data: { ...base.data, name: 'VIEJO' }, updated_at: 500 }), false, 'más antiguo'); eq(await name(), 'Crol');
+  eq(await applyRemoteDoc({ ...base, data: { ...base.data, name: 'Crol 2' }, updated_at: 2000 }), true); eq(await name(), 'Crol 2');
+  await renameSection('remoto-1', 'Local'); // cambio local reciente, pendiente de subir
+  eq(await applyRemoteDoc({ ...base, data: { ...base.data, name: 'NUBE' }, updated_at: 3000 }), false, 'gana lo local'); eq(await name(), 'Local');
+  eq(await applyRemoteDoc({ ...base, deleted: true, data: {}, updated_at: Date.now() + 10000 }), true, 'lápida'); eq(await name(), undefined);
+});
+await test('Sync: secciones con el mismo nombre se unen y los vídeos se mueven', async () => {
+  const ts = Date.now();
+  await putOne('sections', { id: 'dup-a', name: 'Mariposa', order: 20, createdAt: ts, updatedAt: ts, swimmerId: 'yo' });
+  await putOne('sections', { id: 'dup-b', name: 'mariposa', order: 21, createdAt: ts + 5, updatedAt: ts, swimmerId: 'yo' });
+  const c = await addClip({ file: fakeFile(), sectionId: 'dup-b', plane: 'Aéreo', date: '2026-04-01' });
+  eq(await mergeDuplicateSections(), 1);
+  eq((await getOne('clips', c.id)).sectionId, 'dup-a'); eq(await getOne('sections', 'dup-b'), undefined);
+  await deleteClip(c.id);
 });
 
 await dropDatabase();

@@ -1,10 +1,13 @@
 // Arranque de la app: tema, menú (lateral en ordenador, cajón + barra inferior en móvil), rutas.
 import { h, icon } from './utils/dom.js';
-import { route, startRouter, go, parseHash } from './router.js';
+import { route, startRouter, go, parseHash, refresh } from './router.js';
 import { applyTheme, getTheme, cycleTheme } from './settings.js';
 import { ensureSwimmer, listSections, sectionCounts } from './services/sections.js';
 import { getUsage } from './services/storage.js';
 import { formatBytes } from './utils/format.js';
+import { timeAgo } from './utils/dates.js';
+import { cloudConfigured, currentUser } from './services/cloud.js';
+import { scheduleSync, getSyncState, loadLastSync } from './services/sync.js';
 import { newSectionFlow } from './components/section-actions.js';
 import welcome from './views/welcome.js';
 import addView from './views/add.js';
@@ -12,6 +15,7 @@ import sectionView from './views/section.js';
 import clipView from './views/clip.js';
 import evolutionView from './views/evolution.js';
 import compareView from './views/compare.js';
+import accountView from './views/account.js';
 
 applyTheme(getTheme());
 
@@ -26,6 +30,7 @@ route('/', async (p, c) => {
 route('/anadir', addView);
 route('/comparar', compareView);
 route('/evolucion', evolutionView);
+route('/cuenta', accountView);
 route('/seccion/:id', sectionView);
 route('/clip/:id', clipView);
 
@@ -34,6 +39,26 @@ const topbar = document.getElementById('topbar');
 const tabbar = document.getElementById('tabbar');
 const setDrawer = (open) => document.body.classList.toggle('drawer-open', open);
 document.getElementById('scrim').addEventListener('click', () => setDrawer(false));
+
+// Caja de cuenta del menú lateral (se actualiza sola según el estado de la sincronización)
+const accountBox = h('div', { class: 'account-box' });
+function updateAccountBox() {
+  if (!cloudConfigured()) { accountBox.replaceChildren(); return; }
+  const user = currentUser();
+  if (!user) {
+    accountBox.replaceChildren(h('a', { class: 'side-link', href: '#/cuenta', 'data-path': '/cuenta' }, icon('cloud', 20), 'Iniciar sesión'));
+    return;
+  }
+  const st = getSyncState();
+  const text = st.status === 'syncing' ? (st.message || 'Sincronizando…')
+    : st.status === 'error' ? `⚠ ${st.error}`
+    : st.status === 'offline' ? 'Sin conexión: se sincronizará al volver'
+    : st.lastSyncAt ? `Sincronizado ${timeAgo(st.lastSyncAt)}` : 'Pendiente de sincronizar';
+  accountBox.replaceChildren(
+    h('a', { class: 'side-link', href: '#/cuenta', 'data-path': '/cuenta' }, icon('cloud', 20), user.email),
+    h('span', { class: 'hint' }, text));
+  markActive();
+}
 
 const THEME_TEXT = { auto: 'Tema: automático', light: 'Tema: claro', dark: 'Tema: oscuro' };
 const THEME_ICON = { auto: 'auto', light: 'sun', dark: 'moon' };
@@ -62,7 +87,8 @@ async function refreshNav() {
     h('div', { class: 'side-title' }, 'Mis secciones'),
     h('nav', { class: 'side-nav' }, sections.map((s) => sideLink('/seccion/' + s.id, null, s.name, { count: counts[s.id] || 0 }))),
     h('button', { class: 'side-link add', type: 'button', onclick: newSectionFlow }, icon('plus', 18), 'Nueva sección'),
-    h('div', { class: 'side-foot' }, themeBtn, usage));
+    h('div', { class: 'side-foot' }, accountBox, themeBtn, usage));
+  updateAccountBox();
 
   getUsage().then((u) => {
     usage.textContent = u.supported ? `Espacio usado: ${formatBytes(u.usage)} de ${formatBytes(u.quota)}` : '';
@@ -88,15 +114,27 @@ function markActive() {
 }
 
 document.addEventListener('sections-changed', refreshNav);
+window.addEventListener('sync-state', updateAccountBox);
+// Sincronización automática: al cambiar datos, al recuperar internet y al volver a la app
+window.addEventListener('outbox-changed', () => scheduleSync(4000));
+window.addEventListener('online', () => scheduleSync(500));
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') scheduleSync(500); });
+window.addEventListener('data-synced', () => {
+  refreshNav();
+  const { path } = parseHash();
+  if (!path.startsWith('/clip/') && path !== '/anadir' && path !== '/cuenta') refresh(); // no interrumpir lo que estás haciendo
+});
 window.addEventListener('route-changed', () => { markActive(); setDrawer(false); });
 
 (async function init() {
   const view = document.getElementById('view');
   try {
     await ensureSwimmer();
+    await loadLastSync();
     buildBars();
     await refreshNav();
     startRouter(view);
+    scheduleSync(1500);
   } catch (e) {
     console.error(e);
     view.replaceChildren(h('div', { class: 'page narrow' },
